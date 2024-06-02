@@ -1,0 +1,172 @@
+classdef filteringapp < matlab.apps.AppBase
+
+    % Properties that correspond to app components
+    properties (Access = public)
+        UIFigure              matlab.ui.Figure
+        FilterEditField       matlab.ui.control.NumericEditField
+        FilterEditFieldLabel  matlab.ui.control.Label
+        ExportSignalButton    matlab.ui.control.Button
+        LoadSignalButton      matlab.ui.control.Button
+        UIAxes3               matlab.ui.control.UIAxes
+        UIAxes2               matlab.ui.control.UIAxes
+        UIAxes                matlab.ui.control.UIAxes
+    end
+
+    
+    properties (Access = private)
+        y % Noisy Audio Signal
+        Fs % Sampling rate from audio signal
+        t % Time Vector
+        Y % FFT of y
+        f % Frequency vector
+        PSD % Power Sprectral Density
+        Floor % Used to show only half the spectrum since FFT is symmetric 
+        FilterValue % Magnitude of the filter in Hz
+        PSDclean % Clean value of PSD 
+        Yinv % Inverse FFT using new PSD
+    end
+    
+
+    % Callbacks that handle component events
+    methods (Access = private)
+
+        % Button pushed function: LoadSignalButton
+        function LoadSignalButtonPushed(app, event)
+            file = uigetfile('.mp3');
+            if isequal(file,0)
+                return;
+            end 
+            [app.y,app.Fs] = audioread(file);
+            T = length(app.y)/app.Fs; 
+            app.t = linspace(0,T,length(app.y));
+            plot(app.UIAxes,app.t,app.y,"Color","b")
+
+            app.Y = fft(app.y); 
+            app.f = linspace(0, app.Fs, length(app.y));
+            app.PSD = (app.y).*conj(app.y)/length(app.y);
+            app.Floor = 1:floor(length(app.y)/2);
+    
+            plot(app.UIAxes3,app.f(app.Floor),app.PSD(app.Floor))
+        end
+
+        % Button pushed function: ExportSignalButton
+        function ExportSignalButtonPushed(app, event)
+             if isempty(app.Yinv)
+                uialert(app.UIFigure, 'No filtered signal to export!', 'Error');
+                return;
+            end 
+            [file, path] = uiputfile({'*.wav', 'WAV Files (*.wav)'; '*.mat', 'MAT Files (*.mat)'}, 'Save Filtered Signal');
+            if isequal(file, 0)
+                return;
+            end
+            
+            [~, ~, ext] = fileparts(file);
+            filepath = fullfile(path, file);
+            if strcmp(ext, '.wav')
+                audiowrite(filepath, real(app.Yinv), app.Fs);
+            elseif strcmp(ext, '.mat')
+                Signal = real(app.Yinv); % Prepare variable to save
+                fs = app.Fs;       % Prepare variable to save
+                save(filepath, 'Signal', 'fs');
+            end
+        end
+
+        % Value changed function: FilterEditField
+        function FilterEditFieldValueChanged(app, event)
+            value = app.FilterEditField.Value;
+            indices = app.PSD>value;
+            app.PSDclean = (app.PSD).*indices;
+            app.Y = indices.*app.Y; 
+            app.Yinv = ifft(app.Y); 
+
+            plot(app.UIAxes2,app.t,app.Yinv)
+        end
+    end
+
+    % Component initialization
+    methods (Access = private)
+
+        % Create UIFigure and components
+        function createComponents(app)
+
+            % Create UIFigure and hide until all components are created
+            app.UIFigure = uifigure('Visible', 'off');
+            app.UIFigure.Position = [100 100 1067 427];
+            app.UIFigure.Name = 'MATLAB App';
+
+            % Create UIAxes
+            app.UIAxes = uiaxes(app.UIFigure);
+            title(app.UIAxes, 'Noisy Signal')
+            xlabel(app.UIAxes, 'Time(s)')
+            zlabel(app.UIAxes, 'Z')
+            app.UIAxes.Position = [25 210 300 185];
+
+            % Create UIAxes2
+            app.UIAxes2 = uiaxes(app.UIFigure);
+            title(app.UIAxes2, 'Denoised Signal')
+            xlabel(app.UIAxes2, 'Time(s)')
+            ylabel(app.UIAxes2, 'Y')
+            zlabel(app.UIAxes2, 'Z')
+            app.UIAxes2.Position = [743 210 300 185];
+
+            % Create UIAxes3
+            app.UIAxes3 = uiaxes(app.UIFigure);
+            title(app.UIAxes3, 'Power Spectrum')
+            xlabel(app.UIAxes3, 'X')
+            ylabel(app.UIAxes3, 'Y')
+            zlabel(app.UIAxes3, 'Z')
+            app.UIAxes3.Position = [370 210 300 185];
+
+            % Create LoadSignalButton
+            app.LoadSignalButton = uibutton(app.UIFigure, 'push');
+            app.LoadSignalButton.ButtonPushedFcn = createCallbackFcn(app, @LoadSignalButtonPushed, true);
+            app.LoadSignalButton.Position = [143 117 100 22];
+            app.LoadSignalButton.Text = 'Load Signal';
+
+            % Create ExportSignalButton
+            app.ExportSignalButton = uibutton(app.UIFigure, 'push');
+            app.ExportSignalButton.ButtonPushedFcn = createCallbackFcn(app, @ExportSignalButtonPushed, true);
+            app.ExportSignalButton.Position = [873 117 100 22];
+            app.ExportSignalButton.Text = 'Export Signal';
+
+            % Create FilterEditFieldLabel
+            app.FilterEditFieldLabel = uilabel(app.UIFigure);
+            app.FilterEditFieldLabel.HorizontalAlignment = 'right';
+            app.FilterEditFieldLabel.Position = [452 117 38 22];
+            app.FilterEditFieldLabel.Text = 'Filter: ';
+
+            % Create FilterEditField
+            app.FilterEditField = uieditfield(app.UIFigure, 'numeric');
+            app.FilterEditField.ValueChangedFcn = createCallbackFcn(app, @FilterEditFieldValueChanged, true);
+            app.FilterEditField.Position = [505 117 100 22];
+
+            % Show the figure after all components are created
+            app.UIFigure.Visible = 'on';
+        end
+    end
+
+    % App creation and deletion
+    methods (Access = public)
+
+        % Construct app
+        function app = filteringapp
+
+            % Create UIFigure and components
+            createComponents(app)
+
+            % Register the app with App Designer
+            registerApp(app, app.UIFigure)
+
+            if nargout == 0
+                clear app
+            end
+        end
+
+        % Code that executes before app deletion
+        function delete(app)
+
+            % Delete UIFigure when app is deleted
+            delete(app.UIFigure)
+        end
+    end
+end
